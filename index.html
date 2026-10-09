@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0208">
+  <title>TASHKIR LOVES YOU</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b0208;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overscroll-behavior: none;
+    }
+    canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      cursor: move;
+      cursor: grab;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    canvas.dragging {
+      cursor: grabbing;
+    }
+    .ui-controls {
+      position: absolute;
+      bottom: 24px;
+      bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+      left: 50%;
+      -webkit-transform: translateX(-50%);
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 10;
+      background: rgba(20, 8, 14, 0.85);
+      padding: 8px 16px;
+      border-radius: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .ui-btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: none;
+      color: #fff;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: bold;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    .ui-btn svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+    .ui-btn svg .solid {
+      fill: #fff;
+      stroke: none;
+    }
+    .ui-btn.wide {
+      width: auto;
+      padding: 0 14px;
+      border-radius: 21px;
+    }
+    .ui-btn:active {
+      -webkit-transform: scale(0.92);
+      transform: scale(0.92);
+    }
+    .ui-btn:focus-visible {
+      outline: 2px solid #ff4d6d;
+      outline-offset: 2px;
+    }
+    .hint {
+      position: absolute;
+      top: 16px;
+      top: calc(16px + env(safe-area-inset-top, 0px));
+      width: 100%;
+      padding: 0 12px;
+      text-align: center;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 12px;
+      pointer-events: none;
+      -webkit-user-select: none;
+      user-select: none;
+      z-index: 5;
+    }
+    .fallback {
+      display: none;
+      position: absolute;
+      inset: 0;
+      color: #fff;
+      text-align: center;
+      padding: 40px 20px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="hint">Drag to move • Scroll or pinch to zoom • Tap the heart to pause</div>
+
+  <canvas id="heartCanvas"></canvas>
+  <div class="fallback" id="fallback">Your browser can't draw this animation. Try a current version of Chrome, Safari, Firefox or Edge.</div>
+  <noscript><div style="color:#fff;text-align:center;padding:40px 20px;position:absolute;top:0;left:0;width:100%">This animation needs JavaScript turned on.</div></noscript>
+
+  <div class="ui-controls">
+    <button class="ui-btn" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+    </button>
+    <button class="ui-btn" id="pauseBtn" title="Pause or play" aria-label="Pause">
+      <svg viewBox="0 0 24 24" aria-hidden="true" id="pauseIcon"></svg>
+    </button>
+    <button class="ui-btn" id="zoomInBtn" title="Zoom in" aria-label="Zoom in">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg>
+    </button>
+    <button class="ui-btn wide" id="resetBtn" title="Reset position and zoom" aria-label="Reset position and zoom">Reset</button>
+  </div>
+
+  <script>
+  (function () {
+    var canvas = document.getElementById('heartCanvas');
+    var ctx = canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) {
+      document.getElementById('fallback').style.display = 'block';
+      return;
+    }
+
+    var pauseBtn = document.getElementById('pauseBtn');
+    var pauseIcon = document.getElementById('pauseIcon');
+    var zoomInBtn = document.getElementById('zoomInBtn');
+    var zoomOutBtn = document.getElementById('zoomOutBtn');
+    var resetBtn = document.getElementById('resetBtn');
+
+    var now = (window.performance && performance.now)
+      ? function () { return performance.now(); }
+      : function () { return Date.now(); };
+
+    var raf = window.requestAnimationFrame ||
+      window.webkitRequestAnimationFrame ||
+      function (cb) { return setTimeout(function () { cb(now()); }, 16); };
+
+    var reducedMotion = !!(window.matchMedia &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+    var isPaused = reducedMotion;
+    var needsRender = true;
+    var zoomLevel = 1.0;
+    var offsetX = 0;
+    var offsetY = 0;
+    var angleY = 0;
+    var clock = 0; // advances only while playing; drives background motion
+
+    var MIN_ZOOM = 0.3;
+    var MAX_ZOOM = 3.5;
+    var SPIN_SPEED = 1.2;       // radians per second
+    var CAMERA_DISTANCE = 80;   // perspective strength (higher = flatter)
+    var MAX_DPR = 2;            // cap pixel density to keep older phones smooth
+
+    var viewW = 0;
+    var viewH = 0;
+
+    // ---------- Background ----------
+
+    var bgCanvas = document.createElement('canvas');
+    var bgCtx = bgCanvas.getContext('2d');
+
+    function buildBackground() {
+      var dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      bgCanvas.width = Math.round(viewW * dpr);
+      bgCanvas.height = Math.round(viewH * dpr);
+      bgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      var lin = bgCtx.createLinearGradient(0, 0, 0, viewH);
+      lin.addColorStop(0, '#1d0614');
+      lin.addColorStop(0.55, '#0e0310');
+      lin.addColorStop(1, '#030106');
+      bgCtx.fillStyle = lin;
+      bgCtx.fillRect(0, 0, viewW, viewH);
+
+      // Soft colored haze in two corners
+      var r = Math.max(viewW, viewH);
+      var haze1 = bgCtx.createRadialGradient(viewW * 0.15, viewH * 0.2, 0, viewW * 0.15, viewH * 0.2, r * 0.6);
+      haze1.addColorStop(0, 'rgba(120, 20, 90, 0.28)');
+      haze1.addColorStop(1, 'rgba(120, 20, 90, 0)');
+      bgCtx.fillStyle = haze1;
+      bgCtx.fillRect(0, 0, viewW, viewH);
+
+      var haze2 = bgCtx.createRadialGradient(viewW * 0.9, viewH * 0.85, 0, viewW * 0.9, viewH * 0.85, r * 0.55);
+      haze2.addColorStop(0, 'rgba(40, 30, 130, 0.25)');
+      haze2.addColorStop(1, 'rgba(40, 30, 130, 0)');
+      bgCtx.fillStyle = haze2;
+      bgCtx.fillRect(0, 0, viewW, viewH);
+
+      // Dark vignette at the edges
+      var vig = bgCtx.createRadialGradient(viewW / 2, viewH / 2, r * 0.25, viewW / 2, viewH / 2, r * 0.8);
+      vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      vig.addColorStop(1, 'rgba(0, 0, 0, 0.55)');
+      bgCtx.fillStyle = vig;
+      bgCtx.fillRect(0, 0, viewW, viewH);
+    }
+
+    // Positions are stored as 0..1 fractions so they survive resizing
+    var stars = [];
+    var i;
+    for (i = 0; i < 90; i++) {
+      stars.push({
+        x: Math.random(),
+        y: Math.random(),
+        size: 0.5 + Math.random() * 1.3,
+        speed: 0.6 + Math.random() * 1.8,
+        phase: Math.random() * Math.PI * 2
+      });
+    }
+
+    var floaters = [];
+    for (i = 0; i < 16; i++) {
+      floaters.push({
+        x: Math.random(),
+        y: Math.random(),
+        size: 6 + Math.random() * 12,
+        speed: 0.012 + Math.random() * 0.02,   // screen heights per second
+        sway: 8 + Math.random() * 16,
+        swayFreq: 0.4 + Math.random() * 0.8,
+        phase: Math.random() * Math.PI * 2,
+        alpha: 0.08 + Math.random() * 0.14
+      });
+    }
+
+    function miniHeart(x, y, s) {
+      ctx.beginPath();
+      ctx.moveTo(x, y + s * 0.3);
+      ctx.bezierCurveTo(x, y, x - s * 0.5, y, x - s * 0.5, y + s * 0.3);
+      ctx.bezierCurveTo(x - s * 0.5, y + s * 0.6, x, y + s * 0.8, x, y + s);
+      ctx.bezierCurveTo(x, y + s * 0.8, x + s * 0.5, y + s * 0.6, x + s * 0.5, y + s * 0.3);
+      ctx.bezierCurveTo(x + s * 0.5, y, x, y, x, y + s * 0.3);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawBackground() {
+      ctx.drawImage(bgCanvas, 0, 0, viewW, viewH);
+
+      var s;
+      for (var k = 0; k < stars.length; k++) {
+        s = stars[k];
+        var tw = 0.5 + 0.5 * Math.sin(clock * s.speed + s.phase);
+        ctx.globalAlpha = 0.15 + 0.7 * tw;
+        ctx.fillStyle = '#ffe9f3';
+        ctx.fillRect(s.x * viewW, s.y * viewH, s.size, s.size);
+      }
+
+      ctx.fillStyle = '#ff5f8f';
+      for (var m = 0; m < floaters.length; m++) {
+        s = floaters[m];
+        // Rise from the bottom, wrap to the top
+        var yFrac = (s.y - clock * s.speed) % 1.2;
+        if (yFrac < 0) yFrac += 1.2;
+        var py = (yFrac - 0.1) * viewH;
+        var px = s.x * viewW + Math.sin(clock * s.swayFreq + s.phase) * s.sway;
+        ctx.globalAlpha = s.alpha;
+        miniHeart(px, py, s.size);
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ---------- Resize ----------
+
+    var canvasDpr = 1;
+
+    function resizeCanvas() {
+      canvasDpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      viewW = window.innerWidth;
+      viewH = window.innerHeight;
+      canvas.width = Math.round(viewW * canvasDpr);
+      canvas.height = Math.round(viewH * canvasDpr);
+      ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
+      buildBackground();
+      needsRender = true;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('orientationchange', function () {
+      setTimeout(resizeCanvas, 200); // some browsers report the old size at first
+    });
+
+    // ---------- Heart points ----------
+
+    var phrases = [
+      "I Love You", "My Love", "Forever", "You & Me",
+      "Always", "My Everything", "Sweetheart", "Adore You",
+      "Heart & Soul", "Endless Love", "Truly", "Madly",
+      "Deeply", "Mine", "Cherish", "Soulmate", "With All My Heart"
+    ];
+
+    function pickPhrase() {
+      return phrases[Math.floor(Math.random() * phrases.length)];
+    }
+    function heartX(t) {
+      return 16 * Math.pow(Math.sin(t), 3);
+    }
+    function heartY(t) {
+      return 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+    }
+
+    var points = [];
+    var totalPoints = 360;
+    var edgeCount = 160;
+    var isText, t, r, thickness;
+
+    for (i = 0; i < edgeCount; i++) {
+      t = (i / edgeCount) * Math.PI * 2;
+      isText = i % 2 === 0;
+      points.push({
+        x: heartX(t),
+        y: -heartY(t),
+        z: Math.random() * 2 - 1,
+        text: isText ? pickPhrase() : "",
+        isText: isText,
+        isEdge: true
+      });
+    }
+
+    for (i = edgeCount; i < totalPoints; i++) {
+      t = Math.random() * Math.PI * 2;
+      r = Math.pow(Math.random(), 0.6) * 0.92;
+      isText = i % 2 === 0;
+      thickness = 6 * Math.sqrt(Math.max(0, 1 - r * r));
+      points.push({
+        x: heartX(t) * r,
+        y: -heartY(t) * r,
+        z: (Math.random() * 2 - 1) * thickness,
+        text: isText ? pickPhrase() : "",
+        isText: isText,
+        isEdge: false
+      });
+    }
+
+    var projected = [];
+    for (i = 0; i < points.length; i++) {
+      projected.push({ screenX: 0, screenY: 0, z: 0, scale: 1, src: null });
+    }
+
+    function byDepth(a, b) { return a.z - b.z; }
+
+    // ---------- Render ----------
+
+    function render() {
+      drawBackground();
+
+      var centerX = viewW / 2 + offsetX;
+      var centerY = viewH / 2 + offsetY;
+      var currentScale = (Math.min(viewW, viewH) / 45) * zoomLevel;
+      var sizeScale = Math.sqrt(zoomLevel);
+
+      var cosY = Math.cos(angleY);
+      var sinY = Math.sin(angleY);
+      var pulse = 1 + 0.03 * Math.sin(angleY * 3);
+
+      // Glow behind the heart
+      var glowR = currentScale * 24 * pulse;
+      var glow = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowR);
+      glow.addColorStop(0, 'rgba(255, 40, 90, 0.30)');
+      glow.addColorStop(0.5, 'rgba(200, 20, 80, 0.12)');
+      glow.addColorStop(1, 'rgba(200, 20, 80, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(centerX - glowR, centerY - glowR, glowR * 2, glowR * 2);
+
+      var n, pt, out, rx, ry, rz, persp;
+      for (n = 0; n < points.length; n++) {
+        pt = points[n];
+        out = projected[n];
+        rx = (pt.x * cosY + pt.z * sinY) * pulse;
+        ry = pt.y * pulse;
+        rz = (-pt.x * sinY + pt.z * cosY) * pulse;
+        persp = CAMERA_DISTANCE / (CAMERA_DISTANCE - rz);
+
+        out.screenX = centerX + rx * currentScale * persp;
+        out.screenY = centerY + ry * currentScale * persp;
+        out.z = rz;
+        out.scale = persp;
+        out.src = pt;
+      }
+
+      projected.sort(byDepth);
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      var p, depthNorm, red, green, blue, baseSize, fontSize, baseRadius, radius;
+      for (n = 0; n < projected.length; n++) {
+        p = projected[n];
+        pt = p.src;
+
+        depthNorm = Math.max(0.1, Math.min(1.0, (p.z + 17) / 34));
+
+        red = pt.isEdge ? 255 : Math.floor(140 + 115 * depthNorm);
+        green = pt.isEdge ? Math.floor(20 * depthNorm) : Math.floor(10 * depthNorm);
+        blue = pt.isEdge ? Math.floor(60 * depthNorm) : Math.floor(30 * depthNorm);
+
+        ctx.globalAlpha = 0.45 + 0.55 * depthNorm;
+        ctx.fillStyle = "rgb(" + red + "," + green + "," + blue + ")";
+
+        if (pt.isText) {
+          baseSize = pt.isEdge ? 11 : 9;
+          fontSize = Math.max(6, Math.round((baseSize + 6 * depthNorm) * sizeScale * p.scale));
+          ctx.font = "bold " + fontSize + "px sans-serif";
+          ctx.fillText(pt.text, p.screenX, p.screenY);
+        } else {
+          baseRadius = pt.isEdge ? 2.2 : 1.2;
+          radius = (baseRadius + 2 * depthNorm) * sizeScale * p.scale;
+          ctx.beginPath();
+          ctx.arc(p.screenX, p.screenY, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    var lastTime = now();
+
+    function animate(ts) {
+      var current = now();
+      var dt = Math.min((current - lastTime) / 1000, 0.05);
+      lastTime = current;
+
+      if (!isPaused) {
+        angleY += SPIN_SPEED * dt;
+        clock += dt;
+        needsRender = true;
+      }
+      if (needsRender) {
+        render();
+        needsRender = false;
+      }
+      raf(animate);
+    }
+    raf(animate);
+
+    // ---------- Pause button ----------
+
+    function updatePauseButton() {
+      pauseIcon.innerHTML = isPaused
+        ? '<path class="solid" d="M8 5.5v13l11-6.5z"/>'
+        : '<path d="M9 5v14M15 5v14"/>';
+      pauseBtn.setAttribute('aria-label', isPaused ? 'Play' : 'Pause');
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      updatePauseButton();
+      needsRender = true;
+    }
+    updatePauseButton();
+
+    pauseBtn.addEventListener('click', togglePause);
+
+    window.addEventListener('keydown', function (e) {
+      var onButton = e.target && e.target.tagName === 'BUTTON';
+      if ((e.code === 'Space' || e.key === ' ') && !onButton) {
+        e.preventDefault();
+        togglePause();
+      }
+    });
+
+    // ---------- Drag and pinch ----------
+    // One set of handlers; pointer events feed it where supported,
+    // and mouse + touch events feed it on older browsers.
+
+    function clampZoom(z) {
+      return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
+    }
+
+    var pointers = {};   // id -> {x, y}
+    var pointerCount = 0;
+    var pinchStartDist = 0;
+    var pinchStartZoom = 1;
+    var gestureMoved = false;
+    var downTime = 0;
+    var downX = 0;
+    var downY = 0;
+
+    function pinchDistance() {
+      var ids = Object.keys(pointers);
+      var a = pointers[ids[0]];
+      var b = pointers[ids[1]];
+      return Math.hypot ? Math.hypot(a.x - b.x, a.y - b.y)
+        : Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+    }
+
+    function gestureDown(id, x, y) {
+      if (!pointers[id]) pointerCount++;
+      pointers[id] = { x: x, y: y };
+
+      if (pointerCount === 1) {
+        gestureMoved = false;
+        downTime = now();
+        downX = x;
+        downY = y;
+        canvas.className = 'dragging';
+      } else if (pointerCount === 2) {
+        gestureMoved = true; // a pinch is never a tap
+        pinchStartDist = pinchDistance();
+        pinchStartZoom = zoomLevel;
+      }
+    }
+
+    function gestureMove(id, x, y) {
+      var p = pointers[id];
+      if (!p) return;
+      var dx = x - p.x;
+      var dy = y - p.y;
+      p.x = x;
+      p.y = y;
+
+      if (pointerCount === 1) {
+        var moved = Math.sqrt((x - downX) * (x - downX) + (y - downY) * (y - downY));
+        if (moved > 6) gestureMoved = true;
+        if (gestureMoved) {
+          offsetX += dx;
+          offsetY += dy;
+          needsRender = true;
+        }
+      } else if (pointerCount === 2 && pinchStartDist > 0) {
+        zoomLevel = clampZoom(pinchStartZoom * (pinchDistance() / pinchStartDist));
+        needsRender = true;
+      }
+    }
+
+    function gestureUp(id, cancelled) {
+      if (!pointers[id]) return;
+      delete pointers[id];
+      pointerCount--;
+
+      if (pointerCount <= 0) {
+        pointerCount = 0;
+        canvas.className = '';
+        pinchStartDist = 0;
+        var quick = now() - downTime < 500;
+        if (!cancelled && !gestureMoved && quick) togglePause();
+      }
+    }
+
+    if (window.PointerEvent) {
+      canvas.addEventListener('pointerdown', function (e) {
+        if (canvas.setPointerCapture) {
+          try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+        }
+        gestureDown(e.pointerId, e.clientX, e.clientY);
+      });
+      canvas.addEventListener('pointermove', function (e) {
+        gestureMove(e.pointerId, e.clientX, e.clientY);
+      });
+      canvas.addEventListener('pointerup', function (e) { gestureUp(e.pointerId, false); });
+      canvas.addEventListener('pointercancel', function (e) { gestureUp(e.pointerId, true); });
+    } else {
+      // Older browsers: mouse on the canvas, touch on the canvas
+      canvas.addEventListener('mousedown', function (e) {
+        gestureDown('mouse', e.clientX, e.clientY);
+      });
+      window.addEventListener('mousemove', function (e) {
+        gestureMove('mouse', e.clientX, e.clientY);
+      });
+      window.addEventListener('mouseup', function () { gestureUp('mouse', false); });
+
+      canvas.addEventListener('touchstart', function (e) {
+        e.preventDefault(); // also stops the browser's duplicate mouse events
+        for (var a = 0; a < e.changedTouches.length; a++) {
+          var tc = e.changedTouches[a];
+          gestureDown('t' + tc.identifier, tc.clientX, tc.clientY);
+        }
+      }, false);
+      canvas.addEventListener('touchmove', function (e) {
+        e.preventDefault();
+        for (var a = 0; a < e.changedTouches.length; a++) {
+          var tc = e.changedTouches[a];
+          gestureMove('t' + tc.identifier, tc.clientX, tc.clientY);
+        }
+      }, false);
+      canvas.addEventListener('touchend', function (e) {
+        for (var a = 0; a < e.changedTouches.length; a++) {
+          gestureUp('t' + e.changedTouches[a].identifier, false);
+        }
+      }, false);
+      canvas.addEventListener('touchcancel', function (e) {
+        for (var a = 0; a < e.changedTouches.length; a++) {
+          gestureUp('t' + e.changedTouches[a].identifier, true);
+        }
+      }, false);
+    }
+
+
+    function setZoom(factor) {
+      zoomLevel = clampZoom(zoomLevel * factor);
+      needsRender = true;
+    }
+
+    zoomInBtn.addEventListener('click', function () { setZoom(1.25); });
+    zoomOutBtn.addEventListener('click', function () { setZoom(1 / 1.25); });
+
+    resetBtn.addEventListener('click', function () {
+      zoomLevel = 1.0;
+      offsetX = 0;
+      offsetY = 0;
+      needsRender = true;
+    });
+
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      var delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      setZoom(Math.exp(-delta * 0.0015));
+    }, { passive: false });
+
+    document.addEventListener('visibilitychange', function () {
+      lastTime = now();
+    });
+  })();
+  </script>
+</body>
+</html>
